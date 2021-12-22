@@ -5,6 +5,8 @@
 from typing import List, Union, Callable
 
 import numpy as np
+import time
+from tqdm import tqdm
 
 from ..event_handler import EventHandler
 from .loop_state import LoopState
@@ -78,6 +80,12 @@ class OuterLoop(object):
         if not isinstance(user_function, UserFunction):
             user_function = UserFunctionWrapper(user_function)
 
+        pbar = tqdm(total=stopping_condition)
+
+        sample_time = 0
+        update_time = 0
+        compute_next_point_time = 0
+
         if isinstance(stopping_condition, int):
             stopping_condition = FixedIterationsStoppingCondition(stopping_condition + self.loop_state.iteration)
 
@@ -88,16 +96,36 @@ class OuterLoop(object):
         while not stopping_condition.should_stop(self.loop_state):
             _log.info("Iteration {}".format(self.loop_state.iteration))
 
+            update_start = time.time()
             self._update_models()
+            update_end = time.time()
+            update_time += (update_end - update_start)
+
+            compute_next_point_start = time.time()
             new_x = self.candidate_point_calculator.compute_next_points(self.loop_state, context)
+            compute_next_point_end = time.time()
+            compute_next_point_time += (compute_next_point_end - compute_next_point_start)
+
             _log.debug("Next suggested point(s): {}".format(new_x))
+
+            sample_start = time.time()
             results = user_function.evaluate(new_x)
+            sample_end = time.time()
+            sample_time += (sample_end - sample_start)
+
             _log.debug("User function returned: {}".format(results))
             self.loop_state.update(results)
             self.iteration_end_event(self, self.loop_state)
 
+            pbar.update(1)
+
         self._update_models()
         _log.info("Finished outer loop")
+
+        pbar.close()
+        print("Sampling time (s): ", sample_time)
+        print("Updating time (s): ", update_time)
+        print("Computing next point time (s): ", compute_next_point_time)
 
     def _update_models(self):
         for model_updater in self.model_updaters:
